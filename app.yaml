@@ -1,0 +1,12 @@
+command:
+  - "streamlit"
+  - "run"
+  - "app.py"
+  - "--server.port"
+  - "8000"
+  - "--server.address"
+  - "0.0.0.0"
+
+env:
+  - name: LAKEBASE_URL
+    value: "postgresql://user:password@host:5432/databricks_postgres?sslmode=require"
