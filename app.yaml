@@ -9,4 +9,4 @@ command:
 
 env:
   - name: LAKEBASE_URL
-    value: "postgresql://user:password@host:5432/databricks_postgres?sslmode=require"
+    value: "lakebase-url"
