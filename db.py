@@ -2,58 +2,63 @@
 Lakebase (Databricks-managed Postgres) connection helper and DAL.
 
 Connects using a single LAKEBASE_URL (a standard Postgres connection URL,
-e.g. postgresql://role:password@host:5432/databricks_postgres?sslmode=require)
-pointing at a native Postgres role with a static, non-expiring password.
+stored as a Base64 encoded secret in Databricks).
 """
 
+import base64
 import os
 from contextlib import contextmanager
 
 import pandas as pd
 import psycopg2
+from databricks.sdk import WorkspaceClient
 from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
 from sqlalchemy import create_engine
-from databricks.sdk import WorkspaceClient
-import os
-import base64
-from dotenv import load_dotenv
-from databricks.sdk import WorkspaceClient
 
 load_dotenv()
 
+_w = WorkspaceClient()
+
+
 def _lakebase_url() -> str:
-    """Return the connection URL from environment variable or Databricks secrets, safely cleaned."""
+    """Return the connection URL from environment variable or Databricks secret (handling both plain text & Base64)."""
     url = os.getenv("LAKEBASE_URL")
     
     if not url:
         try:
-            w = WorkspaceClient()
             scope = os.environ.get("LAKEBASE_SECRET_SCOPE", "database")
             key = os.environ.get("LAKEBASE_SECRET_KEY", "lakebase-url")
-            secret = w.secrets.get_secret(scope=scope, key=key)
+            
+            secret = _w.secrets.get_secret(scope=scope, key=key)
             if secret and secret.value:
-                url = secret.value
-        except Exception as e:
+                raw_val = secret.value.strip().strip('"').strip("'")
+                
+                # Check if it's already a plain-text Postgres URL
+                if raw_val.startswith("postgresql://") or raw_val.startswith("postgres://"):
+                    url = raw_val
+                else:
+                    # Otherwise, try decoding it as Base64
+                    try:
+                        decoded = base64.b64decode(raw_val).decode("utf-8")
+                        url = decoded.strip().strip('"').strip("'")
+                    except Exception:
+                        # Fallback to raw value if base64 decode fails
+                        url = raw_val
+        except Exception:
             pass
 
     if not url:
-        raise ValueError("LAKEBASE_URL environment variable is not set and could not be fetched from Databricks secrets.")
+        raise ValueError("LAKEBASE_URL environment variable is not set and could not be fetched/decoded from Databricks secrets.")
 
-    # Clean up any trailing/leading whitespaces, quotes, or accidental base64 artifacts
     url = url.strip().strip('"').strip("'")
     
-    # Optional safety check: if it looks like it was base64 encoded by mistake, try decoding it safely
-    # (Remove this block if your secret is stored as plain text)
-    try:
-        # Check if it decodes cleanly and starts with postgres
-        decoded = base64.b64decode(url).decode("utf-8")
-        if decoded.startswith("postgres://") or decoded.startswith("postgresql://"):
-            url = decoded
-    except Exception:
-        pass  # It was already a plain text URL, ignore decode error
+    # Final validation check
+    if not url.startswith("postgresql://") and not url.startswith("postgres://"):
+        raise ValueError(f"Invalid connection string format. Must start with postgresql://. Got: {url[:10]}...")
 
     return url
+
 
 @contextmanager
 def get_connection():
