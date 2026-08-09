@@ -14,17 +14,46 @@ import psycopg2
 from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
 from sqlalchemy import create_engine
+from databricks.sdk import WorkspaceClient
+import os
+import base64
+from dotenv import load_dotenv
+from databricks.sdk import WorkspaceClient
 
 load_dotenv()
 
-
 def _lakebase_url() -> str:
-    """Return the connection URL directly from the LAKEBASE_URL environment variable."""
+    """Return the connection URL from environment variable or Databricks secrets, safely cleaned."""
     url = os.getenv("LAKEBASE_URL")
+    
     if not url:
-        raise ValueError("LAKEBASE_URL environment variable is not set.")
-    return url
+        try:
+            w = WorkspaceClient()
+            scope = os.environ.get("LAKEBASE_SECRET_SCOPE", "database")
+            key = os.environ.get("LAKEBASE_SECRET_KEY", "lakebase-url")
+            secret = w.secrets.get_secret(scope=scope, key=key)
+            if secret and secret.value:
+                url = secret.value
+        except Exception as e:
+            pass
 
+    if not url:
+        raise ValueError("LAKEBASE_URL environment variable is not set and could not be fetched from Databricks secrets.")
+
+    # Clean up any trailing/leading whitespaces, quotes, or accidental base64 artifacts
+    url = url.strip().strip('"').strip("'")
+    
+    # Optional safety check: if it looks like it was base64 encoded by mistake, try decoding it safely
+    # (Remove this block if your secret is stored as plain text)
+    try:
+        # Check if it decodes cleanly and starts with postgres
+        decoded = base64.b64decode(url).decode("utf-8")
+        if decoded.startswith("postgres://") or decoded.startswith("postgresql://"):
+            url = decoded
+    except Exception:
+        pass  # It was already a plain text URL, ignore decode error
+
+    return url
 
 @contextmanager
 def get_connection():

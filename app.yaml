@@ -9,4 +9,4 @@ command:
 
 env:
   - name: LAKEBASE_URL
-    value: "lakebase-url"
+    valueFrom: lakebase-url
